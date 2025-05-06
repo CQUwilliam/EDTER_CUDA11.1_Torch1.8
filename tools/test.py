@@ -1,4 +1,6 @@
 import argparse
+import numpy as np
+from PIL import Image
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import mmcv
@@ -19,7 +21,7 @@ os.environ['MASTER_PORT']='29501'
 def parse_args():
     parser = argparse.ArgumentParser(description='mmseg test (and eval) a model')
     parser.add_argument('--config', type=str, default='configs/bsds/EDTER_BIMLA_320x320_80k_bsds_bs_8.py', help='train config file path')
-    parser.add_argument('--checkpoint', type=str, default='/....Your Path..../XXXXX.pth')
+    parser.add_argument('--checkpoint', type=str, default='/mmsegmentation/iter_30000.pth')
     parser.add_argument(
         '--aug-test', action='store_true', help='Use Flip and Multi scale aug')
     parser.add_argument('--out', help='output result file in pickle format')
@@ -45,7 +47,7 @@ def parse_args():
         action='store_true',
         help='whether to use gpu to collect results.')
     parser.add_argument(
-        '--tmpdir', type =str, default='/...Save Path.../results',
+        '--tmpdir', type =str, default='/mmsegmentation/save',
         help='tmp directory used for collecting results from multiple '
         'workers, available when gpu_collect is not specified')
     parser.add_argument(
@@ -58,7 +60,7 @@ def parse_args():
     parser.add_argument(
         '--launcher',
         choices=['none', 'pytorch', 'slurm', 'mpi'],
-        default='pytorch',
+        default='none',
         help='job launcher')
     parser.add_argument('--local_rank', type=int, default=0)
     args = parser.parse_args()
@@ -124,6 +126,22 @@ def main():
     if not distributed:
         model = MMDataParallel(model, device_ids=[0])
         outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
+        # -----------------------
+        for idx, output in enumerate(outputs):
+            # 假设 output 是 (1, H, W) or (H, W)，如果是 logits 则需要先 argmax
+            if isinstance(output, (list, tuple)):  # 多头输出，取第一个
+                output = output[0]
+            if hasattr(output, 'numpy'):
+                output = output.cpu().numpy()
+            output = output.squeeze()
+
+            if output.ndim == 3 :
+                output = output.argmax(axis=0)
+            output = (output > 0.5).astype(np.uint8) * 255  # 二分类，阈值化变成0或255（可根据实际改）
+            output = 255 - output  # 反转灰度
+
+            save_path = os.path.join('/mmsegmentation/figure', f'{idx}.png')
+            Image.fromarray(output).save(save_path)
     else:
         model = MMDistributedDataParallel(
             model.cuda(),
